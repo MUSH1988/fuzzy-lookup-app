@@ -1,0 +1,6 @@
+{
+  "name": "Fuzzy Lookup & LinkedIn Company Data Fetcher",
+  "description": "Fuzzy matching tool for company master lists and query datasets with automated LinkedIn company data enrichment and Excel export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
