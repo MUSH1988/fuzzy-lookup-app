@@ -12,6 +12,7 @@ interface TableInputBoxProps {
   onChange: (val: string) => void;
   badgeLabel: string;
   badgeColor?: string;
+  hintText?: string;
 }
 
 export const TableInputBox: React.FC<TableInputBoxProps> = ({
@@ -23,7 +24,8 @@ export const TableInputBox: React.FC<TableInputBoxProps> = ({
   value,
   onChange,
   badgeLabel,
-  badgeColor = 'bg-slate-100 text-slate-700'
+  badgeColor = 'bg-slate-100 text-slate-700',
+  hintText
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -46,11 +48,21 @@ export const TableInputBox: React.FC<TableInputBoxProps> = ({
         // Convert to array of rows
         const jsonData = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, { header: 1 });
         const extractedLines: string[] = [];
+
         for (const row of jsonData) {
-          if (Array.isArray(row) && row.length > 0 && row[0]) {
-            const firstCell = String(row[0]).trim();
-            if (firstCell && firstCell.toLowerCase() !== 'company' && firstCell.toLowerCase() !== 'name') {
-              extractedLines.push(firstCell);
+          if (Array.isArray(row) && row.length > 0) {
+            const firstCell = String(row[0] || '').trim();
+            if (
+              firstCell &&
+              firstCell.toLowerCase() !== 'company' &&
+              firstCell.toLowerCase() !== 'name' &&
+              firstCell.toLowerCase() !== 'query'
+            ) {
+              // If multiple columns, preserve them with pipe delimiter
+              const validCells = row
+                .map(c => String(c ?? '').trim())
+                .filter(Boolean);
+              extractedLines.push(validCells.join(' | '));
             }
           }
         }
@@ -63,11 +75,8 @@ export const TableInputBox: React.FC<TableInputBoxProps> = ({
         const lines = text
           .split(/\r?\n/)
           .map(l => {
-            // If CSV, take first column
-            if (l.includes(',')) {
-              return l.split(',')[0].replace(/^["']|["']$/g, '').trim();
-            }
-            return l.trim();
+            const clean = l.trim();
+            return clean;
           })
           .filter(Boolean);
         onChange(lines.join('\n'));
@@ -137,6 +146,27 @@ export const TableInputBox: React.FC<TableInputBoxProps> = ({
 
           <button
             type="button"
+            onClick={async () => {
+              try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                  const clip = await navigator.clipboard.readText();
+                  if (clip.trim()) {
+                    onChange(clip.trim());
+                  }
+                }
+              } catch (e) {
+                console.warn('Clipboard read error', e);
+              }
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md border border-slate-200 transition-colors"
+            title="Paste column from Excel or clipboard"
+          >
+            <Clipboard className="w-3.5 h-3.5 text-slate-600" />
+            <span className="hidden sm:inline">Paste Excel</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md border border-slate-200 transition-colors"
             title="Import from TXT, CSV, or Excel (.xlsx)"
@@ -181,14 +211,14 @@ export const TableInputBox: React.FC<TableInputBoxProps> = ({
         {value === '' && (
           <div className="absolute inset-x-6 top-10 pointer-events-none text-center">
             <p className="text-xs text-slate-400 flex items-center justify-center gap-1">
-              <FileText className="w-3.5 h-3.5" /> Or drag & drop a .csv, .xlsx, or .txt file here
+              <FileText className="w-3.5 h-3.5" /> Or drag &amp; drop a .csv, .xlsx, or .txt file here
             </p>
           </div>
         )}
       </div>
 
       <div className="px-4 pb-3 flex items-center justify-between text-[11px] text-slate-400">
-        <span>One company per line</span>
+        <span>{hintText || 'One entry per line'}</span>
         <span>{badgeLabel}</span>
       </div>
     </div>

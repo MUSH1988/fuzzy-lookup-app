@@ -1,26 +1,50 @@
-export interface LinkedInCompanyInfo {
-  verification: 'Verified Page' | 'Claimed Page' | 'Community Page' | 'N/A';
-  companySize: string;
-  industry: string;
-  headquarters?: string;
-  founded?: number | string;
-  website?: string;
-  linkedinUrl?: string;
-  description?: string;
+export interface QueryRecord {
+  name: string;
+  country?: string;
+  raw: string;
+}
+
+export interface MasterRecord {
+  name: string;
+  country?: string;
+  raw: string;
+}
+
+export interface ComparisonResult {
+  status: 'Match' | 'Mismatch';
+  comparisonLabel: string; // e.g. "Match", "Country Discrepancy", "No Match"
+  mismatchReason?: string;
+  color: 'green' | 'red' | 'amber';
+  countryMatch: boolean;
+  queryCountry?: string;
+  targetCountry?: string;
+  comparisonNote?: string;
+  countryScore?: number; // 0.0 - 1.0
 }
 
 export interface ProcessedRow {
   id: string;
-  query: string;
-  bestMatch: string;
-  matchScore: number; // 0 to 1 (Fuse score: 0 is exact match, 1 is no match)
-  matchPercent: number; // 0 to 100%
-  verification: string;
-  companySize: string;
-  industry: string;
-  headquarters?: string;
-  website?: string;
-  linkedinUrl?: string;
+  query: string; // Query company name from Table 1
+  bestMatch: string; // Best matched company name from Table 2 (Target Master List)
+  matchScore: number;
+  matchPercent: number; // Backwards-compatible
+  confidenceScore: number; // 0 - 100% weighted confidence score
+  nameScore: number; // 0 - 100% company name similarity score (primary 85%)
+  countryScore: number; // 0 - 100% country verification score (secondary 15%)
+  queryCountry?: string; // Query company country
+  targetCountry?: string; // Target master company country
+  comparisonStatus: 'Match' | 'Mismatch';
+  comparisonLabel: string; // e.g. "Verified Match", "Country Discrepancy", "No Match"
+  mismatchReason?: string;
+  comparisonColor: 'green' | 'red' | 'amber';
+  comparisonDetails: {
+    countryMatch: boolean;
+    queryCountry?: string;
+    targetCountry?: string;
+    comparisonNote?: string;
+    nameSimilarity?: number;
+    countryScore?: number;
+  };
   rawFuseScore?: number;
 }
 
@@ -39,3 +63,4 @@ export interface SamplePreset {
   table1: string[];
   table2: string[];
 }
+

@@ -27,10 +27,10 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-                  Fuzzy Lookup + LinkedIn Company Auto-Fetcher
+                  Fuzzy Lookup by Christian
                 </h1>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  Batch fuzzy matching with Fuse.js, real-time company verification, and Excel export
+                  Fast Fuse.js approximate string matching, country validation, and Excel export
                 </p>
               </div>
             </div>

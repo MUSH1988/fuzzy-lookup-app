@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Play, FileSpreadsheet, Download, Copy, Check, RefreshCw, AlertTriangle, Sparkles, Sliders } from 'lucide-react';
+import { Play, FileSpreadsheet, Download, Copy, Check, RefreshCw, AlertTriangle, Sparkles } from 'lucide-react';
 import { Header } from './components/Header';
-import { TableInputBox } from './components/TableInputBox';
+import { ExcelGridInput } from './components/ExcelGridInput';
 import { StatsCards } from './components/StatsCards';
 import { ResultsTable } from './components/ResultsTable';
 import { FuzzyConfigModal } from './components/FuzzyConfigModal';
 import { SAMPLE_PRESETS } from './data/sampleData';
-import { DEFAULT_FUZZY_CONFIG, performFuzzyLookup } from './utils/fuzzyMatcher';
+import { DEFAULT_FUZZY_CONFIG, performFuzzyLookup, validatePastedQueryData } from './utils/fuzzyMatcher';
 import { exportResultsToExcel, exportResultsToCSV, copyResultsToClipboard } from './utils/excelExporter';
 import { FuzzyConfig, ProcessedRow, SamplePreset } from './types';
 
@@ -38,13 +38,19 @@ export default function App() {
     const text2 = table2Text.trim();
 
     if (!text1 || !text2) {
-      setAlertMessage('Paki-paste ang data sa parehong Table 1 at Table 2 (Please paste data into both Table 1 and Table 2).');
+      setAlertMessage('Please enter or paste data into both Table 1 and Table 2 before running the lookup.');
+      return;
+    }
+
+    const validation = validatePastedQueryData(text1);
+    if (!validation.isValid) {
+      setAlertMessage(`Invalid data structure in Table 1 (Query List): ${validation.errors.join(' ')}`);
       return;
     }
 
     setAlertMessage(null);
     setIsLoading(true);
-    setProgressText('Processing & Fetching LinkedIn Data...');
+    setProgressText('Performing fuzzy lookup...');
 
     try {
       const list1 = text1.split('\n').map(i => i.trim()).filter(Boolean);
@@ -71,12 +77,12 @@ export default function App() {
 
   const handleExportExcel = () => {
     if (results.length === 0) {
-      setAlertMessage('Mag-run muna ng lookup bago mag-export (Please run a lookup before exporting).');
+      setAlertMessage('Please run a lookup before exporting to Excel.');
       return;
     }
     setAlertMessage(null);
     try {
-      exportResultsToExcel(results, 'Fuzzy_Lookup_LinkedIn_Data.xlsx');
+      exportResultsToExcel(results, 'Fuzzy_Lookup_by_Christian.xlsx');
     } catch (err: unknown) {
       if (err instanceof Error) {
         setAlertMessage(err.message);
@@ -88,12 +94,12 @@ export default function App() {
 
   const handleExportCSV = () => {
     if (results.length === 0) {
-      setAlertMessage('Mag-run muna ng lookup bago mag-export.');
+      setAlertMessage('Please run a lookup before exporting to CSV.');
       return;
     }
     setAlertMessage(null);
     try {
-      exportResultsToCSV(results, 'Fuzzy_Lookup_LinkedIn_Data.csv');
+      exportResultsToCSV(results, 'Fuzzy_Lookup_by_Christian.csv');
     } catch (err: unknown) {
       if (err instanceof Error) {
         setAlertMessage(err.message);
@@ -150,38 +156,35 @@ export default function App() {
         )}
 
         {/* Two-Column Tables Container */}
-        <div className="tables-container grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+        <div className="tables-container grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
           <div className="table-box">
-            <TableInputBox
+            <ExcelGridInput
               id="table-box-1"
-              textareaId="table1"
-              title="Table 1: Master List / Target Data"
-              subtitle="The verified source list of official company names to match against"
-              placeholder={'Apple Inc.\nGoogle LLC\nMicrosoft Corp'}
               value={table1Text}
               onChange={(val) => {
                 setTable1Text(val);
                 setActivePresetId('');
               }}
-              badgeLabel="Master targets"
-              badgeColor="bg-blue-50 text-blue-700 border border-blue-200"
+              title="Table 1: Query List (Excel Grid)"
+              subtitle="Paste from Excel or Sheets. Columns: Company Name and Country."
+              emptyMessage="Query table is empty. Copy 2 columns (Company Name, Country) from Excel or Sheets and press Ctrl+V, or click 'Paste from Excel'."
+              accentColor="blue"
             />
           </div>
 
           <div className="table-box">
-            <TableInputBox
+            <ExcelGridInput
               id="table-box-2"
-              textareaId="table2"
-              title="Table 2: Lookup List / Query Data"
-              subtitle="The uncleaned query list (with potential typos, abbreviations, or variants)"
-              placeholder={'Apple\nGoogle\nMicrosft'}
               value={table2Text}
               onChange={(val) => {
                 setTable2Text(val);
                 setActivePresetId('');
               }}
-              badgeLabel="Queries to match"
-              badgeColor="bg-purple-50 text-purple-700 border border-purple-200"
+              title="Table 2: Target Master List (Excel Grid)"
+              subtitle="The verified master directory. If no country is specified, it automatically defaults to N/A."
+              defaultEmptyCountry="N/A"
+              emptyMessage="Target Master table is empty. Copy verified master records from Excel or Sheets. Missing country automatically defaults to N/A."
+              accentColor="emerald"
             />
           </div>
         </div>
@@ -193,7 +196,7 @@ export default function App() {
             type="button"
             disabled={isLoading}
             onClick={handleRunLookup}
-            className="btn-run flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+            className="btn-run flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
           >
             {isLoading ? (
               <>
@@ -203,7 +206,7 @@ export default function App() {
             ) : (
               <>
                 <Play className="w-5 h-5 fill-current" />
-                <span>Run Fuzzy Lookup &amp; Get LinkedIn Data</span>
+                <span>Run Fuzzy Lookup</span>
               </>
             )}
           </button>
@@ -212,7 +215,7 @@ export default function App() {
             id="btn-export-excel"
             type="button"
             onClick={handleExportExcel}
-            className="btn-export flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+            className="btn-export flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
           >
             <FileSpreadsheet className="w-5 h-5" />
             <span>Export Results to Excel (.xlsx)</span>
@@ -272,16 +275,16 @@ export default function App() {
           progressText={progressText}
         />
 
-        {/* How It Works & Educational Footer Note */}
+        {/* How It Works & Footer Note */}
         <div className="mt-8 p-4 rounded-xl bg-white border border-slate-200 text-xs text-slate-500 leading-relaxed">
           <div className="flex items-start gap-2.5">
             <Sparkles className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-slate-800 text-sm">
-                About Fuzzy Matching &amp; LinkedIn Company Data Enrichment
+                About Fuzzy Lookup by Christian
               </p>
               <p className="mt-1">
-                This utility uses <strong>Bitap</strong> approximate string matching via <strong>Fuse.js</strong> to compare phonetic and character distance between variations (e.g., &quot;Microsft&quot; → &quot;Microsoft Corp&quot; with 86% match). Upon matching, company organization profiles (Verification status, Employee tier, and Industry sector) are resolved and prepared for 1-click export to formatted Microsoft Excel (<code>.xlsx</code>) spreadsheets.
+                This utility uses <strong>Fuse.js</strong> approximate string matching to find the best match for company names between <strong>Table 1 (Query List)</strong> and <strong>Table 2 (Target Master List)</strong>. It validates <strong>Company Name</strong> and <strong>Country</strong> comparisons with clear match or country mismatch status, and provides 1-click Excel and CSV export.
               </p>
             </div>
           </div>

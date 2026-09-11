@@ -2,25 +2,30 @@ import * as XLSX from 'xlsx';
 import { ProcessedRow } from '../types';
 
 /**
- * Formats row data into standardized spreadsheet schema
+ * Formats row data into spreadsheet schema:
+ * QUERY (TABLE 1) | TARGET MASTER (TABLE 2) | SIMILARITY SCORE | QUERY COUNTRY | TARGET COUNTRY | STATUS | NOTES
  */
 export function formatDataForExport(rows: ProcessedRow[]) {
-  return rows.map(row => ({
-    'Query (Table 2)': row.query,
-    'Best Match (Table 1)': row.bestMatch,
-    'Similarity Score': `${row.matchPercent}%`,
-    'LinkedIn Verification': row.verification,
-    'Company Size': row.companySize,
-    'Industry': row.industry,
-    'Headquarters': row.headquarters || 'N/A',
-    'LinkedIn URL': row.linkedinUrl || 'N/A'
-  }));
+  return rows.map(row => {
+    const confidence = row.confidenceScore ?? row.matchPercent ?? 0;
+    const nameScore = row.nameScore ?? confidence;
+    return {
+      'Query (Table 1)': row.query,
+      'Target Master (Table 2)': row.bestMatch,
+      'Confidence Score': `${confidence}%`,
+      'Name Match': `${nameScore}%`,
+      'Query Country': row.queryCountry || 'N/A',
+      'Target Country': row.targetCountry || 'N/A',
+      'Status': row.comparisonLabel || row.comparisonStatus,
+      'Notes': row.comparisonDetails.comparisonNote || (row.comparisonStatus === 'Match' ? 'Valid match' : (row.mismatchReason || 'Mismatch detected'))
+    };
+  });
 }
 
 /**
  * Exports processed results to an Excel (.xlsx) file
  */
-export function exportResultsToExcel(rows: ProcessedRow[], filename = 'Fuzzy_Lookup_LinkedIn_Data.xlsx') {
+export function exportResultsToExcel(rows: ProcessedRow[], filename = 'Fuzzy_Lookup_by_Christian.xlsx') {
   if (rows.length === 0) {
     throw new Error('No data available to export. Please run a lookup first.');
   }
@@ -30,14 +35,14 @@ export function exportResultsToExcel(rows: ProcessedRow[], filename = 'Fuzzy_Loo
 
   // Auto-fit column widths
   const colWidths = [
-    { wch: 25 }, // Query
-    { wch: 30 }, // Best Match
-    { wch: 18 }, // Similarity Score
-    { wch: 24 }, // LinkedIn Verification
-    { wch: 22 }, // Company Size
-    { wch: 32 }, // Industry
-    { wch: 30 }, // Headquarters
-    { wch: 45 }  // LinkedIn URL
+    { wch: 28 }, // Query (Table 1)
+    { wch: 32 }, // Target Master (Table 2)
+    { wch: 18 }, // Confidence Score
+    { wch: 16 }, // Name Match
+    { wch: 20 }, // Query Country
+    { wch: 20 }, // Target Country
+    { wch: 24 }, // Status
+    { wch: 36 }  // Notes
   ];
   worksheet['!cols'] = colWidths;
 
@@ -49,7 +54,7 @@ export function exportResultsToExcel(rows: ProcessedRow[], filename = 'Fuzzy_Loo
 /**
  * Exports processed results to a CSV (.csv) file
  */
-export function exportResultsToCSV(rows: ProcessedRow[], filename = 'Fuzzy_Lookup_LinkedIn_Data.csv') {
+export function exportResultsToCSV(rows: ProcessedRow[], filename = 'Fuzzy_Lookup_by_Christian.csv') {
   if (rows.length === 0) {
     throw new Error('No data available to export. Please run a lookup first.');
   }
@@ -75,17 +80,30 @@ export function exportResultsToCSV(rows: ProcessedRow[], filename = 'Fuzzy_Looku
 export async function copyResultsToClipboard(rows: ProcessedRow[]): Promise<boolean> {
   if (rows.length === 0) return false;
 
-  const headers = ['Query (Table 2)', 'Best Match (Table 1)', 'Similarity Score', 'LinkedIn Verification', 'Company Size', 'Industry'];
+  const headers = [
+    'QUERY (TABLE 1)',
+    'TARGET MASTER (TABLE 2)',
+    'CONFIDENCE SCORE',
+    'NAME MATCH',
+    'QUERY COUNTRY',
+    'TARGET COUNTRY',
+    'STATUS',
+    'NOTES'
+  ];
   const lines = [headers.join('\t')];
 
   for (const r of rows) {
+    const confidence = r.confidenceScore ?? r.matchPercent ?? 0;
+    const nameScore = r.nameScore ?? confidence;
     lines.push([
       r.query,
       r.bestMatch,
-      `${r.matchPercent}%`,
-      r.verification,
-      r.companySize,
-      r.industry
+      `${confidence}%`,
+      `${nameScore}%`,
+      r.queryCountry || 'N/A',
+      r.targetCountry || 'N/A',
+      r.comparisonLabel || r.comparisonStatus,
+      r.comparisonDetails.comparisonNote || (r.comparisonStatus === 'Match' ? 'Valid match' : (r.mismatchReason || 'Mismatch detected'))
     ].join('\t'));
   }
 
