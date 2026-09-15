@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import {
   FileSpreadsheet,
@@ -12,10 +12,16 @@ import {
   AlertTriangle,
   CheckCircle2,
   Info,
-  X
+  X,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Loader2
 } from 'lucide-react';
 import { normalizeCountry } from '../data/companyDirectory';
-import { parseQueryLine, splitLineIntoCompanyAndCountry } from '../utils/fuzzyMatcher';
+import { splitLineIntoCompanyAndCountry } from '../utils/fuzzyMatcher';
 
 export interface ExcelGridRow {
   name: string;
@@ -188,55 +194,73 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
   );
   const [notification, setNotification] = useState<GridNotification | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [jumpPageInput, setJumpPageInput] = useState('1');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isInternalChangeRef = useRef(false);
 
   const isEmerald = accentColor === 'emerald';
 
   // Synchronize when value changes externally (e.g. preset selection or reset)
+  // Skip re-parsing when change was triggered internally to prevent UI lag on 200k items
   useEffect(() => {
-    const currentSerialized = serializeRowsToText(rows);
-    if (value !== currentSerialized) {
-      setRows(parseExcelDataToRows(value, defaultEmptyCountry));
+    if (isInternalChangeRef.current) {
+      isInternalChangeRef.current = false;
+      return;
     }
+    const parsed = parseExcelDataToRows(value, defaultEmptyCountry);
+    setRows(parsed);
+    setPage(1);
   }, [value, defaultEmptyCountry]);
 
   const updateRowsAndNotify = (newRows: ExcelGridRow[]) => {
+    isInternalChangeRef.current = true;
     setRows(newRows);
     const serialized = serializeRowsToText(newRows);
     onChange(serialized);
   };
 
-  const handleCellChange = (index: number, field: keyof ExcelGridRow, val: string) => {
+  const handleCellChange = (originalIndex: number, field: keyof ExcelGridRow, val: string) => {
+    if (originalIndex < 0 || originalIndex >= rows.length) return;
     const updated = [...rows];
-    updated[index] = {
-      ...updated[index],
+    updated[originalIndex] = {
+      ...updated[originalIndex],
       [field]: val
     };
     updateRowsAndNotify(updated);
   };
 
-  const handleCountryBlur = (index: number) => {
-    if (defaultEmptyCountry && !rows[index]?.country.trim()) {
-      handleCellChange(index, 'country', defaultEmptyCountry);
+  const handleCountryBlur = (originalIndex: number) => {
+    if (defaultEmptyCountry && !rows[originalIndex]?.country.trim()) {
+      handleCellChange(originalIndex, 'country', defaultEmptyCountry);
     }
   };
 
   const handleAddRow = () => {
     const updated = [...rows, { name: '', country: defaultEmptyCountry || '' }];
     updateRowsAndNotify(updated);
+    // Jump to the last page where the new row was added
+    const newTotalPages = Math.ceil(updated.length / pageSize);
+    setPage(newTotalPages);
   };
 
-  const handleDeleteRow = (index: number) => {
-    const updated = rows.filter((_, i) => i !== index);
+  const handleDeleteRow = (originalIndex: number) => {
+    const updated = rows.filter((_, i) => i !== originalIndex);
     updateRowsAndNotify(updated);
   };
 
   const handleClear = () => {
     updateRowsAndNotify([]);
+    setSearchFilter('');
+    setPage(1);
     setNotification(null);
   };
 
-  const handleProcessPastedText = (pastedText: string) => {
+  const handleProcessPastedText = async (pastedText: string) => {
     if (!pastedText.trim()) {
       setNotification({
         type: 'error',
@@ -246,19 +270,28 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
       return;
     }
 
-    const { rows: parsedRows, notification: notif } = parseAndValidateExcelPaste(
-      pastedText,
-      defaultEmptyCountry
-    );
-    if (parsedRows.length > 0) {
-      updateRowsAndNotify(parsedRows);
-    }
-    setNotification(notif);
+    setIsImporting(true);
+    // Allow browser to render loading spinner before heavy parsing
+    await new Promise(r => setTimeout(r, 10));
 
-    if (notif?.type === 'success') {
-      setTimeout(() => {
-        setNotification(prev => (prev?.type === 'success' ? null : prev));
-      }, 4000);
+    try {
+      const { rows: parsedRows, notification: notif } = parseAndValidateExcelPaste(
+        pastedText,
+        defaultEmptyCountry
+      );
+      if (parsedRows.length > 0) {
+        updateRowsAndNotify(parsedRows);
+        setPage(1);
+      }
+      setNotification(notif);
+
+      if (notif?.type === 'success') {
+        setTimeout(() => {
+          setNotification(prev => (prev?.type === 'success' ? null : prev));
+        }, 4000);
+      }
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -267,7 +300,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
       if (navigator.clipboard && navigator.clipboard.readText) {
         const clipText = await navigator.clipboard.readText();
         if (clipText) {
-          handleProcessPastedText(clipText);
+          await handleProcessPastedText(clipText);
           return;
         }
       }
@@ -298,6 +331,9 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
   };
 
   const handleFileUpload = async (file: File) => {
+    setIsImporting(true);
+    await new Promise(r => setTimeout(r, 10));
+
     try {
       const fileName = file.name.toLowerCase();
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
@@ -316,11 +352,11 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
           }
         }
         if (parsedLines.length > 0) {
-          handleProcessPastedText(parsedLines.join('\n'));
+          await handleProcessPastedText(parsedLines.join('\n'));
         }
       } else {
         const text = await file.text();
-        handleProcessPastedText(text);
+        await handleProcessPastedText(text);
       }
     } catch (err) {
       console.error('File import error:', err);
@@ -329,6 +365,8 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
         title: 'Import Failure',
         message: 'Unable to import file. Please check that the file format is a valid Excel spreadsheet (.xlsx, .xls) or CSV.'
       });
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -344,6 +382,42 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
     }
   };
 
+  // Filtered rows with preserved original index for instant in-memory search across 200,000 records
+  const indexedFilteredRows = useMemo(() => {
+    const q = searchFilter.trim().toLowerCase();
+    if (!q) {
+      return rows.map((row, index) => ({ originalIndex: index, row }));
+    }
+    const result: { originalIndex: number; row: ExcelGridRow }[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.name.toLowerCase().includes(q) || (r.country && r.country.toLowerCase().includes(q))) {
+        result.push({ originalIndex: i, row: r });
+      }
+    }
+    return result;
+  }, [rows, searchFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(indexedFilteredRows.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+
+  // Virtualized slice: ONLY render the current page in the DOM (e.g. 50 rows)
+  // This eliminates DOM freezing and makes 200,000 rows completely lag-free!
+  const pagedRows = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return indexedFilteredRows.slice(start, start + pageSize);
+  }, [indexedFilteredRows, safePage, pageSize]);
+
+  const handleJumpPage = (e: React.FormEvent) => {
+    e.preventDefault();
+    const p = parseInt(jumpPageInput, 10);
+    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+      setPage(p);
+    } else {
+      setJumpPageInput(String(safePage));
+    }
+  };
+
   return (
     <div
       id={id}
@@ -354,7 +428,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
       }`}
     >
       {/* Header bar */}
-      <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 rounded-t-xl">
+      <div className="p-3.5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50 rounded-t-xl">
         <div>
           <div className="flex items-center gap-2">
             <FileSpreadsheet className={`w-4 h-4 shrink-0 ${isEmerald ? 'text-emerald-600' : 'text-blue-600'}`} />
@@ -366,7 +440,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
                   : 'bg-blue-50 text-blue-700 border-blue-200'
               }`}
             >
-              {rows.length} {rows.length === 1 ? 'row' : 'rows'}
+              {rows.length.toLocaleString()} {rows.length === 1 ? 'row' : 'rows'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
@@ -392,23 +466,25 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
           <button
             type="button"
             id={`${id}-paste-btn`}
+            disabled={isImporting}
             onClick={handlePasteFromClipboard}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-2xs transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-2xs transition-colors disabled:opacity-50 ${
               isEmerald
                 ? 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800'
                 : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800'
             }`}
             title="Paste directly from Excel or Google Sheets (Company Name and Country)"
           >
-            <Clipboard className="w-3.5 h-3.5" />
+            {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clipboard className="w-3.5 h-3.5" />}
             <span>Paste from Excel</span>
           </button>
 
           {/* Import file */}
           <button
             type="button"
+            disabled={isImporting}
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md border border-slate-200 transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-50 rounded-md border border-slate-200 transition-colors"
             title="Import Excel file (.xlsx, .xls) or CSV"
           >
             <Upload className="w-3.5 h-3.5 text-slate-500" />
@@ -419,7 +495,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
           <button
             type="button"
             onClick={handleCopyGridAsTSV}
-            disabled={rows.length === 0}
+            disabled={rows.length === 0 || isImporting}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-40 rounded-md border border-slate-200 transition-colors"
             title="Copy as Tab-Separated Values (Excel format)"
           >
@@ -458,7 +534,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
           <button
             type="button"
             onClick={handleClear}
-            disabled={rows.length === 0}
+            disabled={rows.length === 0 || isImporting}
             className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-40 rounded-md border border-slate-200 transition-colors"
             title="Clear all rows"
           >
@@ -466,6 +542,51 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Search Filter Bar (Active in Grid mode when records exist) */}
+      {viewMode === 'grid' && rows.length > 0 && (
+        <div className="px-3 py-2 bg-slate-50/70 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchFilter}
+              onChange={(e) => {
+                setSearchFilter(e.target.value);
+                setPage(1);
+              }}
+              placeholder={`Filter among ${rows.length.toLocaleString()} records...`}
+              className="w-full pl-8 pr-7 py-1 text-xs bg-white border border-slate-200 rounded-md text-slate-800 placeholder-slate-400 focus:outline-none focus:border-slate-400 transition-colors"
+            />
+            {searchFilter && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchFilter('');
+                  setPage(1);
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Quick Pagination Stats */}
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <span>
+              Showing {indexedFilteredRows.length === 0 ? 0 : (safePage - 1) * pageSize + 1}–
+              {Math.min(safePage * pageSize, indexedFilteredRows.length).toLocaleString()} of{' '}
+              {indexedFilteredRows.length.toLocaleString()}
+            </span>
+            {searchFilter && (
+              <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[10px]">
+                filtered
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Notification Banner */}
       {notification && (
@@ -513,6 +634,15 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
         </div>
       )}
 
+      {/* Loading Overlay when importing large files (e.g. 200k records) */}
+      {isImporting && (
+        <div className="p-6 text-center bg-slate-50/90 border-b border-slate-100 flex flex-col items-center justify-center gap-2">
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+          <p className="text-xs font-semibold text-slate-700">Importing and indexing records into grid...</p>
+          <p className="text-[11px] text-slate-400">Please wait while the dataset is prepared for fast zero-lag matching.</p>
+        </div>
+      )}
+
       {/* Content Area: Grid Mode vs Raw Text Mode */}
       {viewMode === 'grid' ? (
         <div className="flex flex-col">
@@ -521,7 +651,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-100/80 sticky top-0 z-10 text-slate-600 border-b border-slate-200 font-semibold">
                 <tr>
-                  <th className="py-2.5 px-3 w-10 text-center text-slate-400 font-mono">#</th>
+                  <th className="py-2.5 px-3 w-12 text-center text-slate-400 font-mono">#</th>
                   <th className="py-2.5 px-3 min-w-[220px]">
                     <div className="flex items-center gap-1">
                       <span>Company Name</span>
@@ -543,35 +673,50 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.length === 0 ? (
+                {indexedFilteredRows.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="py-12 text-center text-slate-400">
                       <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                      <p className="text-xs font-semibold text-slate-600">Table is empty</p>
+                      <p className="text-xs font-semibold text-slate-600">
+                        {searchFilter ? 'No matching records found' : 'Table is empty'}
+                      </p>
                       <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto">
-                        {emptyMessage || (
+                        {searchFilter ? (
                           <>
-                            Copy columns (Company Name, Country) from Excel or Sheets and press{' '}
-                            <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">
-                              Ctrl+V
-                            </kbd>
-                            , or click &quot;Paste from Excel&quot;.
+                            No company matches &quot;{searchFilter}&quot;.{' '}
+                            <button
+                              type="button"
+                              onClick={() => setSearchFilter('')}
+                              className="text-blue-600 underline"
+                            >
+                              Clear filter
+                            </button>
                           </>
+                        ) : (
+                          emptyMessage || (
+                            <>
+                              Copy columns (Company Name, Country) from Excel or Sheets and press{' '}
+                              <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">
+                                Ctrl+V
+                              </kbd>
+                              , or click &quot;Paste from Excel&quot;.
+                            </>
+                          )
                         )}
                       </p>
                     </td>
                   </tr>
                 ) : (
-                  rows.map((row, idx) => (
+                  pagedRows.map(({ originalIndex, row }) => (
                     <tr
-                      key={idx}
+                      key={originalIndex}
                       className={`transition-colors group ${
                         isEmerald ? 'hover:bg-emerald-50/30' : 'hover:bg-blue-50/30'
                       }`}
                     >
                       {/* Row index */}
                       <td className="py-2 px-3 text-center text-slate-400 font-mono text-[11px]">
-                        {idx + 1}
+                        {originalIndex + 1}
                       </td>
 
                       {/* Column 1: Company Name */}
@@ -579,7 +724,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
                         <input
                           type="text"
                           value={row.name}
-                          onChange={(e) => handleCellChange(idx, 'name', e.target.value)}
+                          onChange={(e) => handleCellChange(originalIndex, 'name', e.target.value)}
                           placeholder="e.g. Apple Inc."
                           className={`w-full px-2.5 py-1.5 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 rounded-md text-slate-800 text-xs font-medium focus:outline-none transition-all ${
                             isEmerald ? 'focus:border-emerald-500' : 'focus:border-blue-500'
@@ -592,8 +737,8 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
                         <input
                           type="text"
                           value={row.country}
-                          onChange={(e) => handleCellChange(idx, 'country', e.target.value)}
-                          onBlur={() => handleCountryBlur(idx)}
+                          onChange={(e) => handleCellChange(originalIndex, 'country', e.target.value)}
+                          onBlur={() => handleCountryBlur(originalIndex)}
                           placeholder={defaultEmptyCountry ? defaultEmptyCountry : 'e.g. United States'}
                           className={`w-full px-2.5 py-1.5 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 rounded-md text-xs focus:outline-none transition-all ${
                             isEmerald ? 'focus:border-emerald-500' : 'focus:border-blue-500'
@@ -605,7 +750,7 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
                       <td className="py-1 px-2 text-center">
                         <button
                           type="button"
-                          onClick={() => handleDeleteRow(idx)}
+                          onClick={() => handleDeleteRow(originalIndex)}
                           className="p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
                           title="Delete row"
                         >
@@ -619,20 +764,100 @@ export const ExcelGridInput: React.FC<ExcelGridInputProps> = ({
             </table>
           </div>
 
-          {/* Grid Footer Controls */}
-          <div className="p-2.5 bg-slate-50 flex items-center justify-between gap-2 text-xs">
-            <button
-              type="button"
-              onClick={handleAddRow}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-md shadow-2xs transition-colors"
-            >
-              <Plus className={`w-3.5 h-3.5 ${isEmerald ? 'text-emerald-600' : 'text-blue-600'}`} />
-              <span>Add Row</span>
-            </button>
+          {/* Grid Footer Controls: Add Row + High-Performance Pagination */}
+          <div className="p-2.5 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+              <button
+                type="button"
+                onClick={handleAddRow}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-md shadow-2xs transition-colors"
+              >
+                <Plus className={`w-3.5 h-3.5 ${isEmerald ? 'text-emerald-600' : 'text-blue-600'}`} />
+                <span>Add Row</span>
+              </button>
 
-            <span className="text-[11px] text-slate-400">
-              Columns: Company Name · Country {defaultEmptyCountry ? `(Empty = ${defaultEmptyCountry})` : ''}
-            </span>
+              {/* Rows per page selector */}
+              {indexedFilteredRows.length > 25 && (
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <span>Show:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="px-1.5 py-0.5 bg-white border border-slate-200 rounded text-xs text-slate-700 focus:outline-none"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={250}>250</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1 text-xs">
+                {/* First page */}
+                <button
+                  type="button"
+                  onClick={() => setPage(1)}
+                  disabled={safePage <= 1}
+                  className="p-1 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded hover:bg-slate-100"
+                  title="First Page"
+                >
+                  <ChevronsLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Prev page */}
+                <button
+                  type="button"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className="p-1 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded hover:bg-slate-100"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Page Jump Input */}
+                <form onSubmit={handleJumpPage} className="flex items-center gap-1">
+                  <span className="text-[11px] text-slate-500">Page</span>
+                  <input
+                    type="text"
+                    value={jumpPageInput}
+                    onChange={(e) => setJumpPageInput(e.target.value)}
+                    onBlur={() => setJumpPageInput(String(safePage))}
+                    className="w-12 text-center py-0.5 px-1 bg-white border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  />
+                  <span className="text-[11px] text-slate-500">of {totalPages.toLocaleString()}</span>
+                </form>
+
+                {/* Next page */}
+                <button
+                  type="button"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className="p-1 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded hover:bg-slate-100"
+                  title="Next Page"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Last page */}
+                <button
+                  type="button"
+                  onClick={() => setPage(totalPages)}
+                  disabled={safePage >= totalPages}
+                  className="p-1 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded hover:bg-slate-100"
+                  title="Last Page"
+                >
+                  <ChevronsRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : (

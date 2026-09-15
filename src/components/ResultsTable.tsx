@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   ArrowUpDown,
@@ -12,7 +12,11 @@ import {
   AlertTriangle,
   Filter,
   Sparkles,
-  SlidersHorizontal
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react';
 import { ProcessedRow } from '../types';
 
@@ -45,6 +49,17 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
   const [sortField, setSortField] = useState<SortField>('confidenceScore');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [jumpPageInput, setJumpPageInput] = useState('1');
+
+  // Reset page to 1 when filters or sorting change
+  useEffect(() => {
+    setPage(1);
+    setJumpPageInput('1');
+  }, [searchTerm, confidenceFilter, minConfidence, sortField, sortOrder]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -144,6 +159,25 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
 
     return list;
   }, [results, searchTerm, confidenceFilter, minConfidence, sortField, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+
+  // Virtualized slice: render ONLY the active page of results to maintain 60fps responsiveness
+  const pagedResults = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredAndSorted.slice(start, start + pageSize);
+  }, [filteredAndSorted, safePage, pageSize]);
+
+  const handleJumpPage = (e: React.FormEvent) => {
+    e.preventDefault();
+    const p = parseInt(jumpPageInput, 10);
+    if (!isNaN(p) && p >= 1 && p <= totalPages) {
+      setPage(p);
+    } else {
+      setJumpPageInput(String(safePage));
+    }
+  };
 
   return (
     <div className="result-container mt-6 bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
@@ -377,7 +411,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
             )}
 
             {!isLoading &&
-              filteredAndSorted.map((row) => {
+              pagedResults.map((row) => {
                 const confidence = row.confidenceScore ?? row.matchPercent ?? 0;
                 const nameScore = row.nameScore ?? confidence;
                 const isScoreHigh = confidence >= 80;
@@ -526,6 +560,98 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Pagination Bar for Results Table */}
+      {!isLoading && filteredAndSorted.length > 0 && (
+        <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          {/* Record count summary & page size selector */}
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
+            <span className="text-slate-500 font-medium">
+              Showing {(safePage - 1) * pageSize + 1}–
+              {Math.min(safePage * pageSize, filteredAndSorted.length).toLocaleString()} of{' '}
+              {filteredAndSorted.length.toLocaleString()} records
+            </span>
+
+            {filteredAndSorted.length > 25 && (
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                <span>Show:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="px-2 py-1 bg-white border border-slate-200 rounded-md text-xs text-slate-700 focus:outline-none"
+                >
+                  <option value={25}>25 / page</option>
+                  <option value={50}>50 / page</option>
+                  <option value={100}>100 / page</option>
+                  <option value={250}>250 / page</option>
+                  <option value={500}>500 / page</option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Page navigation buttons */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPage(1)}
+                disabled={safePage <= 1}
+                className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded-md hover:bg-slate-100 shadow-2xs transition-colors"
+                title="First Page"
+              >
+                <ChevronsLeft className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded-md hover:bg-slate-100 shadow-2xs transition-colors"
+                title="Previous Page"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Page Jump Form */}
+              <form onSubmit={handleJumpPage} className="flex items-center gap-1 px-1">
+                <span className="text-[11px] text-slate-500">Page</span>
+                <input
+                  type="text"
+                  value={jumpPageInput}
+                  onChange={(e) => setJumpPageInput(e.target.value)}
+                  onBlur={() => setJumpPageInput(String(safePage))}
+                  className="w-12 text-center py-1 px-1 bg-white border border-slate-200 rounded-md text-xs text-slate-800 font-semibold focus:outline-none focus:border-blue-500 shadow-2xs"
+                />
+                <span className="text-[11px] text-slate-500">of {totalPages.toLocaleString()}</span>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded-md hover:bg-slate-100 shadow-2xs transition-colors"
+                title="Next Page"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPage(totalPages)}
+                disabled={safePage >= totalPages}
+                className="p-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed bg-white border border-slate-200 rounded-md hover:bg-slate-100 shadow-2xs transition-colors"
+                title="Last Page"
+              >
+                <ChevronsRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -64,3 +64,13 @@ export interface SamplePreset {
   table2: string[];
 }
 
+export interface MatchProgressInfo {
+  current: number;
+  total: number;
+  currentItem: string;
+  stage: 'indexing' | 'matching';
+  percentage: number;
+  itemsPerSecond?: number;
+  etaSeconds?: number;
+}
+

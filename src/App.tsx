@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Play, FileSpreadsheet, Download, Copy, Check, RefreshCw, AlertTriangle, Sparkles } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Play, FileSpreadsheet, Download, Copy, Check, RefreshCw, AlertTriangle, Sparkles, XCircle, Database, Search } from 'lucide-react';
 import { Header } from './components/Header';
 import { ExcelGridInput } from './components/ExcelGridInput';
 import { StatsCards } from './components/StatsCards';
@@ -8,7 +8,7 @@ import { FuzzyConfigModal } from './components/FuzzyConfigModal';
 import { SAMPLE_PRESETS } from './data/sampleData';
 import { DEFAULT_FUZZY_CONFIG, performFuzzyLookup, validatePastedQueryData } from './utils/fuzzyMatcher';
 import { exportResultsToExcel, exportResultsToCSV, copyResultsToClipboard } from './utils/excelExporter';
-import { FuzzyConfig, ProcessedRow, SamplePreset } from './types';
+import { FuzzyConfig, ProcessedRow, SamplePreset, MatchProgressInfo } from './types';
 
 export default function App() {
   const defaultPreset = SAMPLE_PRESETS[0];
@@ -23,14 +23,23 @@ export default function App() {
   const [results, setResults] = useState<ProcessedRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressText, setProgressText] = useState('');
+  const [progressInfo, setProgressInfo] = useState<MatchProgressInfo | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleSelectPreset = (preset: SamplePreset) => {
     setTable1Text(preset.table1.join('\n'));
     setTable2Text(preset.table2.join('\n'));
     setActivePresetId(preset.id);
     setAlertMessage(null);
+  };
+
+  const handleCancelLookup = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
   };
 
   const handleRunLookup = async () => {
@@ -50,7 +59,11 @@ export default function App() {
 
     setAlertMessage(null);
     setIsLoading(true);
-    setProgressText('Performing fuzzy lookup...');
+    setProgressInfo(null);
+    setProgressText('Initializing high-speed lookup engine...');
+
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
 
     try {
       const list1 = text1.split('\n').map(i => i.trim()).filter(Boolean);
@@ -60,18 +73,47 @@ export default function App() {
         list1,
         list2,
         fuzzyConfig,
-        (current, total, currentItem) => {
-          setProgressText(`Matching query ${current} of ${total}: "${currentItem}"...`);
-        }
+        (currentOrInfo, total, currentItem) => {
+          if (typeof currentOrInfo === 'object') {
+            setProgressInfo(currentOrInfo);
+            if (currentOrInfo.stage === 'indexing') {
+              setProgressText(`Indexing ${currentOrInfo.current.toLocaleString()} of ${currentOrInfo.total.toLocaleString()} target master companies...`);
+            } else {
+              setProgressText(`Matching query ${currentOrInfo.current.toLocaleString()} of ${currentOrInfo.total.toLocaleString()}: "${currentOrInfo.currentItem}"`);
+            }
+          } else {
+            const current = currentOrInfo;
+            const tot = total ?? 1;
+            const item = currentItem ?? '';
+            setProgressInfo({
+              current,
+              total: tot,
+              currentItem: item,
+              stage: 'matching',
+              percentage: Math.round((current / tot) * 100)
+            });
+            setProgressText(`Matching query ${current.toLocaleString()} of ${tot.toLocaleString()}: "${item}"`);
+          }
+        },
+        { signal: abortCtrl.signal }
       );
 
+      if (abortCtrl.signal.aborted) {
+        setAlertMessage(`Lookup stopped by user. Found ${processed.length.toLocaleString()} matching records.`);
+      }
       setResults(processed);
-    } catch (err) {
-      console.error('Error during fuzzy lookup:', err);
-      setAlertMessage('An unexpected error occurred during processing.');
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        setAlertMessage('Lookup was cancelled by user.');
+      } else {
+        console.error('Error during fuzzy lookup:', err);
+        setAlertMessage('An unexpected error occurred during processing.');
+      }
     } finally {
       setIsLoading(false);
       setProgressText('');
+      setProgressInfo(null);
+      abortControllerRef.current = null;
     }
   };
 
@@ -190,39 +232,42 @@ export default function App() {
         </div>
 
         {/* Action Button Group */}
-        <div className="btn-group flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-6">
-          <button
-            id="btn-run-lookup"
-            type="button"
-            disabled={isLoading}
-            onClick={handleRunLookup}
-            className="btn-run flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                <span>Processing Lookup...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-5 h-5 fill-current" />
-                <span>Run Fuzzy Lookup</span>
-              </>
-            )}
-          </button>
+        <div className="btn-group flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-4">
+          {isLoading ? (
+            <button
+              id="btn-cancel-lookup"
+              type="button"
+              onClick={handleCancelLookup}
+              className="btn-run flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+            >
+              <XCircle className="w-5 h-5" />
+              <span>Stop / Cancel Lookup</span>
+            </button>
+          ) : (
+            <button
+              id="btn-run-lookup"
+              type="button"
+              onClick={handleRunLookup}
+              className="btn-run flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+            >
+              <Play className="w-5 h-5 fill-current" />
+              <span>Run Fuzzy Lookup</span>
+            </button>
+          )}
 
           <button
             id="btn-export-excel"
             type="button"
+            disabled={isLoading || results.length === 0}
             onClick={handleExportExcel}
-            className="btn-export flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+            className="btn-export flex-1 py-3.5 px-6 font-semibold text-sm sm:text-base text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
           >
             <FileSpreadsheet className="w-5 h-5" />
             <span>Export Results to Excel (.xlsx)</span>
           </button>
 
           {/* Auxiliary utilities when results are ready */}
-          {results.length > 0 && (
+          {results.length > 0 && !isLoading && (
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
@@ -264,6 +309,57 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Real-time Progress Display during Lookup */}
+        {isLoading && (
+          <div className="mb-6 p-4 bg-slate-900 text-white rounded-xl border border-slate-800 shadow-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-400">
+                  {progressInfo?.stage === 'indexing'
+                    ? 'Phase 1: Building High-Speed Master Index'
+                    : 'Phase 2: Ultra-Fast Fuzzy Matching'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                {progressInfo?.itemsPerSecond && (
+                  <span className="text-xs text-slate-400 font-mono">
+                    {Math.round(progressInfo.itemsPerSecond).toLocaleString()} items/sec
+                  </span>
+                )}
+                <span className="text-sm font-mono font-bold text-white">
+                  {progressInfo?.percentage ?? 0}%
+                </span>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2.5">
+              <div
+                className="h-full bg-linear-to-r from-blue-500 to-emerald-400 rounded-full transition-all duration-150"
+                style={{ width: `${Math.min(100, Math.max(2, progressInfo?.percentage ?? 0))}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-300">
+              <div className="flex items-center gap-2 truncate pr-2">
+                {progressInfo?.stage === 'indexing' ? (
+                  <Database className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                ) : (
+                  <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                )}
+                <span className="truncate">{progressText}</span>
+              </div>
+
+              {progressInfo && progressInfo.total > 0 && (
+                <span className="text-slate-400 shrink-0 font-mono text-[11px]">
+                  {progressInfo.current.toLocaleString()} / {progressInfo.total.toLocaleString()}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Statistical Summary Cards */}
         <StatsCards results={results} />
